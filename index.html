@@ -1,0 +1,710 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>屍戰狂潮 - 線上排行版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #020617; font-family: 'Segoe UI', Roboto, sans-serif; touch-action: none; user-select: none; }
+        #game-container { position: relative; width: 100%; height: 100vh; display: flex; justify-content: center; align-items: center; }
+        canvas { box-shadow: 0 0 40px rgba(0,0,0,0.9); max-width: 100%; }
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; display: flex; flex-direction: column; }
+        .hud-text { text-shadow: 0 2px 4px rgba(0,0,0,0.8); }
+        .btn { pointer-events: auto; background: linear-gradient(to bottom, #3b82f6, #1d4ed8); border: none; padding: 15px 40px; color: white; font-size: 24px; font-weight: bold; border-radius: 50px; box-shadow: 0 6px 0 #1e3a8a; cursor: pointer; transition: transform 0.1s; }
+        .btn:active { transform: translateY(4px); box-shadow: 0 2px 0 #1e3a8a; }
+        .btn-google { background: white; color: #333; display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 18px; box-shadow: 0 4px 0 #ccc; }
+        .btn-guest { background: #4b5563; color: #ddd; font-size: 16px; box-shadow: 0 4px 0 #1f2937; }
+        .btn-shop { pointer-events: auto; background: linear-gradient(to bottom, #eab308, #a16207); border: none; padding: 10px 30px; color: white; font-size: 18px; font-weight: bold; border-radius: 50px; box-shadow: 0 4px 0 #713f12; cursor: pointer; }
+        
+        /* 排行榜樣式 */
+        #leaderboard-modal { pointer-events: auto; }
+        .rank-item:nth-child(1) { color: #fbbf24; font-weight: 900; font-size: 1.2em; } /* Gold */
+        .rank-item:nth-child(2) { color: #94a3b8; font-weight: 800; } /* Silver */
+        .rank-item:nth-child(3) { color: #b45309; font-weight: 700; } /* Bronze */
+
+        /* Boss & Anim */
+        #boss-warning { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 60; text-align: center; width: 100%; pointer-events: none; display: flex; flex-direction: column; align-items: center; opacity: 0; }
+        #boss-warning.active { animation: boss-pulse 2s ease-out forwards; }
+        @keyframes boss-pulse { 0% { opacity: 0; transform: translate(-50%, -50%) scale(0.8); } 10% { opacity: 1; transform: translate(-50%, -50%) scale(1.2); } 100% { opacity: 0; transform: translate(-50%, -50%) scale(1.5); } }
+        #buff-bar-container { width: 200px; height: 8px; background: rgba(255,255,255,0.2); border-radius: 4px; margin-top: 5px; overflow: hidden; }
+        #buff-bar { height: 100%; background: #facc15; width: 0%; }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <div id="fog-overlay" class="absolute top-0 left-0 w-full h-64 bg-gradient-to-b from-slate-950 to-transparent pointer-events-none z-10"></div>
+    <canvas id="gameCanvas"></canvas>
+
+    <div id="ui-layer">
+        <!-- Login Screen (Initial) -->
+        <div id="login-screen" class="absolute inset-0 flex flex-col items-center justify-center bg-black/95 z-50 pointer-events-auto">
+            <h1 class="text-7xl font-black text-white italic mb-8 tracking-tighter drop-shadow-2xl">屍戰<span class="text-red-600">狂潮</span></h1>
+            <div class="flex flex-col gap-4 w-72">
+                <button id="google-login-btn" class="btn btn-google">
+                    <svg class="w-6 h-6" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+                    Google 登入 (紀錄排名)
+                </button>
+                <button id="guest-login-btn" class="btn btn-guest">
+                    👤 遊客登入 (不紀錄)
+                </button>
+                <p id="login-status" class="text-gray-500 text-sm text-center mt-2">等待操作...</p>
+            </div>
+        </div>
+
+        <!-- Main Menu -->
+        <div id="menu-screen" class="absolute inset-0 flex flex-col items-center justify-center bg-black/90 backdrop-blur-md pointer-events-auto z-40 hidden">
+            <h1 class="text-6xl font-black text-white italic mb-2">屍戰<span class="text-red-600">狂潮</span></h1>
+            
+            <!-- User Info -->
+            <div class="flex items-center space-x-3 mb-6 bg-gray-800 px-4 py-2 rounded-full">
+                <img id="user-avatar" src="" class="w-8 h-8 rounded-full hidden">
+                <span id="user-name" class="text-white font-bold">Guest</span>
+            </div>
+
+            <div class="bg-gray-800/60 px-8 py-3 rounded-full border-2 border-yellow-600/60 mb-6 flex items-center space-x-3">
+                <span class="text-3xl">🟡</span>
+                <span class="text-yellow-400 font-bold text-4xl" id="menu-gold-display">0</span>
+            </div>
+
+            <div class="flex flex-col space-y-4 w-64">
+                <button id="start-btn" class="btn">開始屍潮</button>
+                <button id="leaderboard-btn" class="btn-shop bg-purple-600">🏆 排行榜</button>
+                <button id="shop-btn" class="btn-shop">商城 (未開放)</button>
+            </div>
+        </div>
+
+        <!-- In Game HUD -->
+        <div id="game-hud" class="w-full flex justify-between items-start p-6 mt-2 z-20 hidden">
+            <div>
+                <div class="text-blue-400 font-bold text-xs tracking-widest mb-1">POPULATION</div>
+                <div id="score-display" class="text-6xl font-black text-white hud-text leading-none">1</div>
+            </div>
+            <div class="text-right space-y-1 flex flex-col items-end pr-8">
+                <div class="bg-black/60 px-3 py-1 rounded-full border border-yellow-600/50 flex items-center backdrop-blur">
+                    <span class="text-yellow-400 font-bold text-xl mr-2">🟡 <span id="gold-display">0</span></span>
+                    <span class="text-gray-400 text-xs font-mono" id="kill-progress">0/100</span>
+                </div>
+                <div class="text-white text-sm font-bold">Tier: <span id="tier-display" class="text-purple-400">0</span></div>
+                <div id="buff-area" class="hidden flex flex-col items-end mt-1">
+                    <div class="text-yellow-300 font-bold text-xs">⚡ RAPID FIRE ⚡</div>
+                    <div id="buff-bar-container"><div id="buff-bar"></div></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Leaderboard Modal -->
+        <div id="leaderboard-modal" class="hidden absolute inset-0 flex items-center justify-center bg-black/90 z-50">
+            <div class="bg-gray-900 p-8 rounded-2xl border border-purple-500 w-80 max-h-[80vh] flex flex-col">
+                <h2 class="text-3xl font-bold text-white mb-4 text-center">🏆 榮譽榜</h2>
+                <div id="leaderboard-list" class="flex-1 overflow-y-auto space-y-2 text-white mb-4 text-sm">
+                    <!-- Rows injected here -->
+                    <div class="text-center text-gray-500">載入中...</div>
+                </div>
+                <button id="close-leaderboard-btn" class="btn-shop bg-gray-600 text-sm py-2">關閉</button>
+            </div>
+        </div>
+
+        <!-- Game Over -->
+        <div id="game-over-area" class="absolute top-1/3 left-1/2 -translate-x-1/2 hidden text-center p-6 border-2 border-red-600/50 bg-black/90 rounded-xl shadow-2xl min-w-[300px] z-50">
+            <div class="text-red-500 font-black text-4xl mb-2 uppercase">Defeated</div>
+            <div class="text-white text-xl mb-2">最終人口: <span id="final-score" class="text-blue-400 font-bold text-2xl">0</span></div>
+            <div class="text-yellow-400 text-xl border-t border-white/10 pt-3 font-bold">
+                獲得金幣: +<span id="final-gold">0</span> 🟡
+            </div>
+            <button id="retry-btn" class="btn mt-4 text-lg px-6 py-2">再次挑戰</button>
+            <button id="home-btn" class="btn-shop bg-gray-600 mt-2 text-sm">回到主選單</button>
+        </div>
+        
+        <!-- Boss Warning -->
+        <div id="boss-warning" class="hidden">
+            <div class="text-8xl font-black text-red-600 drop-shadow-[0_0_50px_rgba(220,38,38,1)]">BOSS</div>
+            <div class="text-white text-2xl font-bold tracking-[1em] mt-2 bg-red-900/80 inline-block px-6 py-1 rounded">WARNING</div>
+        </div>
+        
+        <!-- Center Msg -->
+        <div id="center-msg" class="hidden absolute top-1/3 left-1/2 transform -translate-x-1/2 pointer-events-none z-40 text-center w-full">
+            <div id="center-msg-text" class="text-4xl font-black text-yellow-400 drop-shadow-lg animate-bounce">LEVEL UP!</div>
+        </div>
+    </div>
+</div>
+
+<!-- FIREBASE MODULE -->
+<script type="module">
+    // 1. 引入 Firebase
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+    import { getAuth, signInWithPopup, GoogleAuthProvider, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+    import { getFirestore, collection, addDoc, query, orderBy, limit, getDocs } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+    // 2. Firebase 設定 (請替換成你自己的!)
+    // ⚠️⚠️⚠️ REPLACE THIS WITH YOUR OWN CONFIG FROM FIREBASE CONSOLE ⚠️⚠️⚠️
+    const firebaseConfig = {
+        apiKey: "AIzaSyCW4srjH1wAHVSekzO_u80uRnbrP6SeBvY",
+        authDomain: "undeadfrenzy-94cf2.firebaseapp.com",
+        projectId: "undeadfrenzy-94cf2",
+        storageBucket: "undeadfrenzy-94cf2.firebasestorage.app",
+        messagingSenderId: "401725139896",
+        appId: "1:401725139896:web:a384379e31ab68ee41fd4d",
+        measurementId: "G-M2KNF0XDKQ"
+    };
+
+    // Initialize Firebase
+    let app, auth, db;
+    try {
+        app = initializeApp(firebaseConfig);
+        auth = getAuth(app);
+        db = getFirestore(app);
+    } catch (e) {
+        console.error("Firebase Init Error (Did you replace the config?):", e);
+    }
+
+    // UI Refs
+    const loginScreen = document.getElementById('login-screen');
+    const menuScreen = document.getElementById('menu-screen');
+    const loginStatus = document.getElementById('login-status');
+    const userNameEl = document.getElementById('user-name');
+    const userAvatarEl = document.getElementById('user-avatar');
+    
+    let currentUser = null;
+
+    // Auth Listeners
+    document.getElementById('google-login-btn').addEventListener('click', () => {
+        const provider = new GoogleAuthProvider();
+        signInWithPopup(auth, provider)
+            .catch(error => loginStatus.innerText = "登入失敗: " + error.message);
+    });
+
+    document.getElementById('guest-login-btn').addEventListener('click', () => {
+        signInAnonymously(auth)
+            .catch(error => loginStatus.innerText = "遊客登入失敗: " + error.message);
+    });
+
+    onAuthStateChanged(auth, (user) => {
+        if (user) {
+            currentUser = user;
+            loginScreen.classList.add('hidden');
+            menuScreen.classList.remove('hidden');
+            
+            if (user.isAnonymous) {
+                userNameEl.innerText = "遊客 (不紀錄排名)";
+                userAvatarEl.classList.add('hidden');
+            } else {
+                userNameEl.innerText = user.displayName;
+                userAvatarEl.src = user.photoURL;
+                userAvatarEl.classList.remove('hidden');
+            }
+        }
+    });
+
+    // Export functions to global scope so Game Logic can use them
+    window.saveScoreToFirestore = async (score) => {
+        if (!currentUser || currentUser.isAnonymous) return; // Guests don't save
+        try {
+            await addDoc(collection(db, "leaderboards"), {
+                name: currentUser.displayName,
+                photo: currentUser.photoURL,
+                score: score,
+                timestamp: new Date()
+            });
+            console.log("Score saved!");
+        } catch (e) {
+            console.error("Error saving score: ", e);
+        }
+    };
+
+    window.fetchLeaderboard = async () => {
+        const listEl = document.getElementById('leaderboard-list');
+        listEl.innerHTML = "載入中...";
+        
+        try {
+            const q = query(collection(db, "leaderboards"), orderBy("score", "desc"), limit(10));
+            const querySnapshot = await getDocs(q);
+            
+            listEl.innerHTML = "";
+            let rank = 1;
+            querySnapshot.forEach((doc) => {
+                const data = doc.data();
+                const div = document.createElement('div');
+                div.className = "flex justify-between items-center bg-white/5 p-2 rounded rank-item";
+                div.innerHTML = `
+                    <div class="flex items-center gap-2">
+                        <span class="w-6 text-center">${rank}.</span>
+                        <img src="${data.photo}" class="w-6 h-6 rounded-full">
+                        <span class="truncate w-32">${data.name}</span>
+                    </div>
+                    <span>${formatNum(data.score)}</span>
+                `;
+                listEl.appendChild(div);
+                rank++;
+            });
+        } catch (e) {
+            listEl.innerText = "無法載入排行榜 (請檢查 Firebase 規則)";
+        }
+    };
+</script>
+
+<script>
+// --- GAME LOGIC (Vanilla JS) ---
+
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+// Global Game Vars
+let gameState = 'MENU'; 
+let frames = 0;
+let score = 1;
+let goldCoins = parseInt(localStorage.getItem('zombie_gold') || '0');
+let killCount = 0;
+let sessionGold = 0;
+
+// System Vars
+let fireRate = 1.5;
+let baseGateValue = 1;
+let difficultyTimer = 0;
+let lastShotTime = 0;
+let totalChestsOpened = 0;
+let worldTier = 0;
+let bossSpawnCount = 0;
+let nextBossTriggerHp = 150;
+let isBossSpawning = false;
+let buffTimer = 0;
+const BUFF_DURATION = 300;
+let activeTimeouts = [];
+let lastBossSpawnTime = -999;
+
+const SPAWN_DISTANCE = 900; 
+const MAX_QUEUE_SIZE = 5;
+const QUEUE_GAP = 80;
+
+// Lists
+let player = { x: 0, y: 0, w: 40, h: 40 };
+let bullets = [];
+let enemies = [];
+let particles = [];
+let floatTexts = [];
+let gateQueue = [];
+let chestQueue = [];
+
+let inputX = 0;
+
+// UI Refs
+const ui = {
+    score: document.getElementById('score-display'),
+    gold: document.getElementById('gold-display'),
+    menuGold: document.getElementById('menu-gold-display'),
+    kill: document.getElementById('kill-progress'),
+    tier: document.getElementById('tier-display'),
+    gameHud: document.getElementById('game-hud'),
+    menu: document.getElementById('menu-screen'),
+    gameOver: document.getElementById('game-over-area'),
+    finalScore: document.getElementById('final-score'),
+    finalGold: document.getElementById('final-gold'),
+    bossWarn: document.getElementById('boss-warning'),
+    centerMsg: document.getElementById('center-msg'),
+    msgText: document.getElementById('center-msg-text'),
+    evoMsg: document.getElementById('evolution-msg'),
+    buffArea: document.getElementById('buff-area'),
+    buffBar: document.getElementById('buff-bar'),
+    leaderboard: document.getElementById('leaderboard-modal')
+};
+
+ui.menuGold.innerText = goldCoins;
+
+// --- Core Functions ---
+
+function resize() {
+    canvas.width = window.innerWidth > 500 ? 480 : window.innerWidth;
+    canvas.height = window.innerHeight;
+    inputX = canvas.width / 2;
+    
+    const oldY = player.y;
+    player.y = canvas.height - 100;
+    player.x = canvas.width / 2;
+    
+    if (gameState === 'PLAYING' && oldY !== 0) {
+        const dy = player.y - oldY;
+        // Shift entities to maintain relative distance
+        enemies.forEach(e => e.y += dy);
+        bullets.forEach(b => b.y += dy);
+        particles.forEach(p => p.y += dy);
+        gateQueue.forEach(g => g.y += dy);
+        chestQueue.forEach(c => c.y += dy);
+        floatTexts.forEach(t => t.y += dy);
+    }
+}
+window.addEventListener('resize', resize);
+
+function safeSetTimeout(cb, delay) {
+    const id = setTimeout(cb, delay);
+    activeTimeouts.push(id);
+    return id;
+}
+
+function formatNum(num) {
+    if (num >= 1e9) return (num / 1e9).toFixed(1).replace(/\.0$/, '') + 'B';
+    if (num >= 1e6) return (num / 1e6).toFixed(1).replace(/\.0$/, '') + 'M';
+    if (num >= 1e3) return (num / 1e3).toFixed(1).replace(/\.0$/, '') + 'k';
+    return Math.floor(num).toString();
+}
+
+// --- Game Classes ---
+// (Same classes as before: Bullet, Gate, Chest, Enemy, Particle, FloatingText)
+// NOTE: Re-pasted minimal versions to ensure "QueueItem" is defined
+
+class Bullet {
+    constructor(x, y) {
+        this.x = x; this.y = y; this.r = 5; this.speed = 25;
+        this.damage = score; this.marked = false; this.isCrit = buffTimer > 0;
+    }
+    update() { this.y -= this.speed; if(this.y < 0) this.marked = true; }
+    draw() {
+        ctx.fillStyle = this.isCrit ? '#facc15' : '#fff';
+        ctx.beginPath(); ctx.arc(this.x, this.y, this.r, 0, Math.PI*2); ctx.fill();
+        if(this.isCrit) { ctx.shadowColor='#facc15'; ctx.shadowBlur=10; ctx.stroke(); ctx.shadowBlur=0; }
+    }
+}
+
+class QueueItem {
+    constructor(index) {
+        this.index = index; this.y = player.y - SPAWN_DISTANCE;
+        this.targetY = 0; this.marked = false; this.w = canvas.width/3 - 16; this.h = 50;
+    }
+    updatePos() {
+        this.targetY = (player.y - 180) - (this.index * QUEUE_GAP);
+        this.y += (this.targetY - this.y) * 0.15;
+    }
+    drawBase() { ctx.save(); ctx.translate(this.x, this.y); ctx.textAlign='center'; ctx.textBaseline='middle'; }
+}
+
+class Gate extends QueueItem {
+    constructor(index) {
+        super(index); this.x = (canvas.width/3)*0.5; this.baseVal = baseGateValue;
+        const r = Math.random();
+        if(r<0.02) { this.rarity='LEGENDARY'; this.m=5; this.c='#f97316'; }
+        else if(r<0.15) { this.rarity='RARE'; this.m=3; this.c='#a855f7'; }
+        else { this.rarity='NORMAL'; this.m=1; this.c='#3b82f6'; }
+        this.val = Math.ceil(this.baseVal * this.m);
+    }
+    takeHit() {
+        if(this.index!==0) return false;
+        score+=this.val;
+        addFloat(`+${formatNum(this.val)}`, this.rarity==='LEGENDARY'?'#fbbf24':'#93c5fd', this.x, this.y);
+        spawnParticles(this.x, this.y, this.c, 15);
+        if(this.rarity==='LEGENDARY') shake(15);
+        this.marked = true; return true;
+    }
+    draw() {
+        super.drawBase();
+        if(this.rarity==='LEGENDARY') { let s=1+Math.sin(frames*0.2)*0.05; ctx.scale(s,s); ctx.shadowColor=this.c; ctx.shadowBlur=20; }
+        ctx.fillStyle = this.c+'44'; ctx.fillRect(-this.w/2,-this.h/2,this.w,this.h);
+        ctx.strokeStyle=this.c; ctx.lineWidth=this.rarity==='NORMAL'?2:4; ctx.strokeRect(-this.w/2,-this.h/2,this.w,this.h);
+        ctx.fillStyle='#fff'; ctx.font='bold 24px Arial';
+        ctx.fillText(`+${formatNum(this.val)}` + (this.rarity==='LEGENDARY'?' 👑':''), 0, 0);
+        ctx.restore();
+    }
+}
+
+class Chest extends QueueItem {
+    constructor(index) {
+        super(index); this.x = (canvas.width/3)*1.5;
+        let rank = totalChestsOpened + index;
+        let hp = 50 * Math.pow(1.8, Math.max(0, rank-2)) * Math.pow(1.5, worldTier);
+        this.maxHp = Math.ceil(hp); this.hp = this.maxHp;
+        this.type = Math.random()>0.4 ? 'GATE' : 'SPEED'; this.shake=0;
+    }
+    takeHit(dmg) {
+        if(this.index!==0) return false;
+        this.hp -= dmg; this.shake=5;
+        if(this.hp<=0) { this.reward(); this.marked=true; totalChestsOpened++; }
+        return true;
+    }
+    reward() {
+        spawnParticles(this.x, this.y, '#eab308', 20);
+        if(this.type==='GATE') {
+            let v = Math.max(1, Math.ceil(baseGateValue * (0.5 + totalChestsOpened*0.1)));
+            baseGateValue += v; showMsg(`門數值 +${formatNum(v)}`);
+        } else {
+            fireRate += 0.2; showMsg(`攻速提升!`);
+        }
+    }
+    draw() {
+        super.drawBase();
+        if(this.shake>0) { ctx.translate((Math.random()-0.5)*this.shake, (Math.random()-0.5)*this.shake); this.shake*=0.8; }
+        ctx.fillStyle = this.type==='GATE'?'#eab308':'#22c55e';
+        ctx.fillRect(-this.w/2,-this.h/2,this.w,this.h);
+        ctx.fillStyle='rgba(0,0,0,0.3)'; ctx.fillRect(-this.w/2,this.h/2-6,this.w,6);
+        // HP Bar
+        ctx.fillStyle='#000'; ctx.fillRect(-this.w/2+5, -this.h/2+5, this.w-10, 6);
+        ctx.fillStyle='#fff'; ctx.fillRect(-this.w/2+5, -this.h/2+5, (this.w-10)*(Math.max(0,this.hp/this.maxHp)), 6);
+        
+        ctx.fillStyle='#fff'; ctx.font='bold 16px Arial'; ctx.lineWidth=3; ctx.strokeStyle='#000';
+        ctx.strokeText(formatNum(Math.ceil(this.hp)), 0, -5); ctx.fillText(formatNum(Math.ceil(this.hp)), 0, -5);
+        ctx.font='bold 11px Arial'; ctx.fillText(this.type==='GATE'?'門升級':'攻速UP', 0, 15);
+        ctx.restore();
+    }
+}
+
+class Enemy {
+    constructor(isBoss=false, isMid=false) {
+        this.isBoss=isBoss; this.isMid=isMid;
+        this.x = (canvas.width/3)*2.5 + (isBoss?0:(Math.random()*30-15));
+        this.y = player.y - SPAWN_DISTANCE;
+        this.w = isBoss?100:40; this.h = isBoss?100:40;
+        
+        let scaling = 5 * Math.pow(1.12, difficultyTimer/120) + (score*0.6);
+        let baseHp = Math.ceil(10 + scaling);
+        if(isMid) baseHp *= 5;
+        if(isBoss) { baseHp = Math.ceil(10+scaling)*7; this.speed=0.3; }
+        else { this.speed = Math.min(3.5, 0.7 + difficultyTimer*0.0002); }
+        
+        this.maxHp = baseHp; this.hp = this.maxHp;
+        this.c = isBoss?'#dc2626':(isMid?'#9333ea':'#ef4444');
+        this.marked = false;
+    }
+    update() { this.y+=this.speed; if(this.y > player.y-this.h/2) this.hitPlayer(); }
+    hitPlayer() {
+        this.marked = true; score = Math.max(0, score - Math.ceil(this.hp));
+        addFloat(`-${formatNum(Math.ceil(this.hp))}`, '#ff0000', player.x, player.y-50);
+        spawnParticles(player.x, player.y, '#ff0000', 20); shake(this.isBoss?30:10);
+        if(score<=0) gameOver();
+    }
+    takeHit(dmg) {
+        this.hp -= dmg;
+        if(this.hp<=0) {
+            this.marked = true;
+            killCount++; 
+            if(killCount>=100) {
+                goldCoins++; sessionGold++; killCount=0; localStorage.setItem('zombie_gold', goldCoins);
+                addFloat("+1 🟡", '#facc15', this.x, this.y);
+            }
+            ui.gold.innerText=goldCoins; ui.kill.innerText=`${killCount}/100`;
+            spawnParticles(this.x, this.y, this.c, 15);
+            if(this.isBoss) { bossDefeated(); triggerBossReward(); }
+            return true;
+        }
+        spawnParticles(this.x, this.y, this.c, 2); return false;
+    }
+    draw() {
+        ctx.fillStyle = this.c; ctx.fillRect(this.x-this.w/2, this.y-this.h/2, this.w, this.h);
+        if(this.isBoss) { ctx.strokeStyle='#facc15'; ctx.lineWidth=4; ctx.strokeRect(this.x-this.w/2, this.y-this.h/2, this.w, this.h); ctx.font='50px Arial'; ctx.textAlign='center'; ctx.fillText("💀", this.x, this.y); }
+        else { ctx.fillStyle='#000'; ctx.fillRect(this.x-8, this.y-4, 4, 4); ctx.fillRect(this.x+4, this.y-4, 4, 4); }
+        
+        ctx.fillStyle='#fff'; ctx.font='bold 14px Arial'; ctx.textAlign='center'; ctx.lineWidth=3; ctx.strokeStyle='#000';
+        let t = formatNum(Math.ceil(this.hp)); ctx.strokeText(t, this.x, this.y-this.h/2-5); ctx.fillText(t, this.x, this.y-this.h/2-5);
+    }
+}
+
+class FloatingText {
+    constructor(text, color, x, y, s=20) { this.text=text; this.c=color; this.x=x; this.y=y; this.s=s; this.life=1.0; }
+    update() { this.y-=1; this.life-=0.03; }
+    draw() { ctx.save(); ctx.globalAlpha=Math.max(0,this.life); ctx.fillStyle=this.c; ctx.font=`bold ${this.s}px Arial`; ctx.strokeStyle='black'; ctx.lineWidth=3; ctx.strokeText(this.text,this.x,this.y); ctx.fillText(this.text,this.x,this.y); ctx.restore(); }
+}
+
+class Particle {
+    constructor(x, y, c) { this.x=x; this.y=y; this.c=c; let a=Math.random()*6.28; let s=Math.random()*5; this.vx=Math.cos(a)*s; this.vy=Math.sin(a)*s; this.life=1; }
+    update() { this.x+=this.vx; this.y+=this.vy; this.life-=0.05; }
+    draw() { ctx.globalAlpha=this.life; ctx.fillStyle=this.c; ctx.fillRect(this.x,this.y,4,4); }
+}
+
+// --- Core Logic ---
+
+function startGame() {
+    // Clean up old state
+    activeTimeouts.forEach(id => clearTimeout(id)); activeTimeouts=[];
+    
+    score=1; fireRate=1.5; baseGateValue=1; difficultyTimer=0; lastShotTime=0; totalChestsOpened=0;
+    worldTier=0; bossSpawnCount=0; nextBossTriggerHp=200; isBossSpawning=false; buffTimer=0; frames=0;
+    killCount=0; sessionGold=0; lastBossSpawnTime=-999;
+    
+    bullets=[]; gateQueue=[]; chestQueue=[]; enemies=[]; particles=[]; floatTexts=[];
+    
+    ui.tier.innerText="0"; ui.gold.innerText=goldCoins; ui.kill.innerText="0/100";
+    ui.bossWarn.classList.remove('active'); ui.bossWarn.classList.add('hidden');
+    
+    gameState='PLAYING';
+    ui.menu.classList.add('hidden'); ui.gameOver.classList.add('hidden'); ui.gameHud.classList.remove('hidden');
+    
+    loop();
+}
+
+function loop() {
+    if(gameState==='PAUSED') { requestAnimationFrame(loop); return; }
+    if(gameState!=='PLAYING') return;
+    
+    frames++; difficultyTimer++;
+    
+    // Player Move
+    player.x += (inputX - player.x) * 0.2;
+    
+    // Shoot
+    let fr = fireRate;
+    if(buffTimer>0) { fr*=3; buffTimer--; ui.buffBar.style.width=(buffTimer/BUFF_DURATION*100)+'%'; if(buffTimer<=0) ui.buffArea.classList.add('hidden'); }
+    if(Date.now()-lastShotTime > 1000/fr) {
+        bullets.push(new Bullet(player.x, player.y-20)); lastShotTime=Date.now();
+    }
+
+    // Spawning
+    if(frames % 60 === 0) { // Every second check
+        // Fill Queues
+        while(gateQueue.length<MAX_QUEUE_SIZE) gateQueue.push(new Gate(gateQueue.length));
+        while(chestQueue.length<MAX_QUEUE_SIZE) chestQueue.push(new Chest(chestQueue.length));
+    }
+    
+    // Queue Update
+    gateQueue = gateQueue.filter(x=>!x.marked); gateQueue.forEach((x,i)=>{x.index=i; x.updatePos();});
+    chestQueue = chestQueue.filter(x=>!x.marked); chestQueue.forEach((x,i)=>{x.index=i; x.updatePos();});
+
+    // Enemy Spawn
+    if(frames > 60) {
+        let scaling = 5 * Math.pow(1.15, difficultyTimer/100);
+        let stdHp = Math.ceil(5 + scaling + (score*0.5));
+        
+        // Boss Trigger: Check HP Threshold + Cooldown
+        if(!isBossSpawning && stdHp >= nextBossTriggerHp && frames-lastBossSpawnTime > 600) {
+            isBossSpawning = true;
+            ui.bossWarn.classList.remove('hidden'); ui.bossWarn.classList.add('active');
+            safeSetTimeout(()=>{
+                ui.bossWarn.classList.remove('active'); ui.bossWarn.classList.add('hidden');
+                if(gameState==='PLAYING') {
+                    enemies.push(new Enemy(true, false));
+                    nextBossTriggerHp = stdHp * 1.3 + 100;
+                    lastBossSpawnTime = frames;
+                    isBossSpawning = false;
+                }
+            }, 2000);
+        } 
+        else if(!isBossSpawning) {
+            let rate = Math.max(60, 150 - Math.floor(difficultyTimer/10));
+            if(frames % rate === 0) {
+                enemies.push(new Enemy(false, worldTier>0 && Math.random()<0.1));
+            }
+        }
+    }
+
+    // Updates
+    bullets.forEach(x=>x.update()); bullets=bullets.filter(x=>!x.marked);
+    enemies.forEach(x=>x.update()); enemies=enemies.filter(x=>!x.marked);
+    particles.forEach(x=>x.update()); particles=particles.filter(x=>x.life>0);
+    floatTexts.forEach(x=>x.update()); floatTexts=floatTexts.filter(x=>x.life>0);
+
+    // Collisions
+    bullets.forEach(b => {
+        let hit = false;
+        if(gateQueue[0] && collide(b, gateQueue[0])) hit = gateQueue[0].takeHit();
+        if(!hit && chestQueue[0] && collide(b, chestQueue[0])) hit = chestQueue[0].takeHit(b.damage);
+        if(!hit) {
+            for(let e of enemies) {
+                if(collide(b, e)) { hit = e.takeHit(b.damage); break; }
+            }
+        }
+        if(hit) b.marked = true;
+    });
+
+    draw();
+    requestAnimationFrame(loop);
+}
+
+function draw() {
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    
+    // Shake
+    let sx=0, sy=0; if(shakeAmt>0) { sx=(Math.random()-0.5)*shakeAmt; sy=(Math.random()-0.5)*shakeAmt; shakeAmt*=0.9; if(shakeAmt<0.5) shakeAmt=0; }
+    ctx.save(); ctx.translate(sx,sy);
+
+    // Grid
+    ctx.strokeStyle='rgba(255,255,255,0.05)'; ctx.beginPath();
+    ctx.moveTo(canvas.width/3,0); ctx.lineTo(canvas.width/3,canvas.height);
+    ctx.moveTo(canvas.width*2/3,0); ctx.lineTo(canvas.width*2/3,canvas.height);
+    ctx.stroke();
+
+    [...gateQueue, ...chestQueue, ...enemies].forEach(x=>x.draw());
+    bullets.forEach(x=>x.draw());
+    particles.forEach(x=>x.draw());
+    floatTexts.forEach(x=>x.draw());
+
+    // Player
+    ctx.fillStyle = buffTimer>0?'#facc15':'#3b82f6'; ctx.fillRect(player.x-20, player.y-20, 40, 40);
+    ctx.fillStyle='#93c5fd'; ctx.fillRect(player.x-5, player.y-30, 10, 10);
+
+    ctx.restore();
+    
+    // UI Updates
+    ui.score.innerText = formatNum(score);
+    ui.gateBase.innerText = `+${formatNum(baseGateValue)}`;
+    ui.rate.innerText = `${(buffTimer>0?fireRate*3:fireRate).toFixed(1)}/s`;
+}
+
+// --- Helpers ---
+function addFloat(t,c,x,y,s=20) { floatTexts.push(new FloatingText(t,c,x,y,s)); }
+function spawnParticles(x,y,c,n) { for(let i=0;i<n;i++) particles.push(new Particle(x,y,c)); }
+function shake(a) { shakeAmt=a; }
+let shakeAmt=0;
+function collide(c, r) { return c.x>r.x-r.w/2 && c.x<r.x+r.w/2 && c.y>r.y-r.h/2 && c.y<r.y+r.h/2; }
+function showMsg(t) { ui.msgText.innerText=t; ui.centerMsg.classList.remove('hidden'); safeSetTimeout(()=>ui.centerMsg.classList.add('hidden'), 1500); }
+
+function bossDefeated() {
+    bossSpawnCount++;
+    if(bossSpawnCount>=bossesToEvolve) {
+        bossSpawnCount=0; worldTier++; nextBossTriggerHp*=3;
+        ui.evoMsg.classList.remove('hidden'); ui.evoMsg.classList.add('evo-anim');
+        safeSetTimeout(()=>{ ui.evoMsg.classList.remove('evo-anim'); ui.evoMsg.classList.add('hidden'); }, 3000);
+        shake(50); spawnParticles(canvas.width/2, canvas.height/2, '#a855f7', 100);
+        ui.tier.innerText=worldTier;
+    }
+}
+
+function triggerBossReward() {
+    let r = Math.random();
+    if(r<0.33) { // Chest
+        let c=0; chestQueue.forEach(x=>{ 
+            let d = Math.floor(x.maxHp*0.5); 
+            x.takeHit(d); 
+            addFloat(`-${formatNum(d)}`, '#ff0000', x.x, x.y-30, 30);
+            c++; 
+        });
+        if(c>0) showMsg("💥 寶箱轟炸 💥");
+    } else if (r<0.66) { // Gate
+        let v=0; gateQueue.forEach(x=>{ v+=x.finalVal; spawnParticles(x.x,x.y,x.color,10); x.marked=true; });
+        score+=v; showMsg(`🚪 收割 +${formatNum(v)}`);
+    } else { // Buff
+        buffTimer=BUFF_DURATION; ui.buffArea.classList.remove('hidden'); showMsg("⚡ 急速狂熱 ⚡");
+    }
+}
+
+function gameOver() {
+    gameState='GAMEOVER';
+    ui.gameHud.classList.add('hidden');
+    ui.gameOver.classList.remove('hidden');
+    ui.finalScore.innerText=formatNum(score);
+    ui.finalGold.innerText=sessionGold;
+    ui.menuGold.innerText=goldCoins;
+    
+    // Save score (if user is logged in - handled by window.saveScoreToFirestore in the module script)
+    if(window.saveScoreToFirestore) window.saveScoreToFirestore(score);
+}
+
+// --- Input ---
+window.addEventListener('mousemove', e=>{ if(gameState==='PLAYING') inputX = (e.clientX - canvas.getBoundingClientRect().left); });
+window.addEventListener('touchmove', e=>{ e.preventDefault(); if(gameState==='PLAYING') inputX = (e.touches[0].clientX - canvas.getBoundingClientRect().left); }, {passive:false});
+
+// Buttons
+document.getElementById('start-btn').addEventListener('click', startGame);
+document.getElementById('retry-btn').addEventListener('click', startGame);
+document.getElementById('home-btn').addEventListener('click', ()=>{
+    gameState='MENU'; ui.gameOver.classList.add('hidden'); ui.menu.classList.remove('hidden');
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+});
+document.getElementById('leaderboard-btn').addEventListener('click', ()=>{
+    ui.leaderboard.classList.remove('hidden');
+    if(window.fetchLeaderboard) window.fetchLeaderboard();
+});
+document.getElementById('close-leaderboard-btn').addEventListener('click', ()=>ui.leaderboard.classList.add('hidden'));
+
+resize();
+ctx.fillStyle = '#020617';
+ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+</script>
+</body>
+</html>
